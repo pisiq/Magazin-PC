@@ -1,0 +1,125 @@
+@model List<Recomandare_PC.Models.CartItem>
+@{
+    ViewData["Title"] = "Coș și Checkout";
+    var recommendations = (Recomandare_PC.Services.GeminiRecommendationResult?)(ViewBag.Recommendations);
+    var total = Model.Sum(c => c.Price);
+}
+
+<h2 class="mb-4">Coșul meu</h2>
+
+@if (TempData["OrderConfirmed"] is true)
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <strong>Comandă finalizată!</strong> Mulțumim pentru achiziție.
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+}
+
+@if (!Model.Any())
+{
+    <div class="alert alert-info">
+        Coșul este gol. <a asp-action="Search">Caută produse</a>.
+    </div>
+}
+else
+{
+    <!-- Cart items -->
+    <div class="card mb-4">
+        <div class="card-header"><strong>Produse selectate</strong></div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Produs</th>
+                        <th>Categorie</th>
+                        <th class="text-end">Preț (RON)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in Model)
+                    {
+                        <tr>
+                            <td>@item.Name</td>
+                            <td><span class="badge bg-secondary">@item.CategoryName</span></td>
+                            <td class="text-end fw-bold">@item.Price.ToString("F2")</td>
+                            <td class="text-end">
+                                <form method="post" asp-action="RemoveFromCart" class="d-inline">
+                                    <input type="hidden" name="productId" value="@item.ProductId" />
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">Elimină</button>
+                                </form>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="2" class="fw-bold">TOTAL</td>
+                        <td class="text-end fw-bold text-primary fs-5">@total.ToString("F2") RON</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <!-- Gemini Recommendations -->
+    @if (recommendations is not null)
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex align-items-center gap-2">
+                <span class="badge bg-primary">AI</span>
+                <strong>Recomandări Gemini pentru componente lipsă</strong>
+            </div>
+            <div class="card-body">
+                @if (!string.IsNullOrWhiteSpace(recommendations.Explanation))
+                {
+                    <p class="text-muted fst-italic mb-3">@recommendations.Explanation</p>
+                }
+
+                @if (!recommendations.Recommendations.Any())
+                {
+                    <p class="text-success mb-0">Configurația ta acoperă toate categoriile principale!</p>
+                }
+                else
+                {
+                    <div class="row g-3">
+                        @foreach (var rec in recommendations.Recommendations)
+                        {
+                            <div class="col-md-6">
+                                <div class="card border-primary h-100">
+                                    <div class="card-body">
+                                        <span class="badge bg-primary mb-1">@rec.Category</span>
+                                        <h6 class="card-title">@rec.ProductName</h6>
+                                        <p class="text-primary fw-bold mb-1">@rec.Price.ToString("F2") RON</p>
+                                        <p class="text-muted small mb-2">@rec.Reason</p>
+                                        @if (rec.ProductId > 0)
+                                        {
+                                            <form method="post" asp-action="AddToCart">
+                                                <input type="hidden" name="productId" value="@rec.ProductId" />
+                                                <input type="hidden" name="returnUrl" value="/Shop/Checkout" />
+                                                <button type="submit" class="btn btn-outline-primary btn-sm w-100">
+                                                    + Adaugă în coș
+                                                </button>
+                                            </form>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Finalize Order -->
+    <div class="d-flex justify-content-between align-items-center">
+        <a asp-action="Search" class="btn btn-outline-secondary">Continuă cumpărăturile</a>
+        <form method="post" asp-action="FinalizeOrder">
+            <button type="submit" class="btn btn-success btn-lg px-5">
+                Finalizează Comanda — @total.ToString("F2") RON
+            </button>
+        </form>
+    </div>
+}

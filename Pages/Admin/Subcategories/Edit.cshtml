@@ -1,0 +1,20 @@
+@page "{id:int}"
+@model Recomandare_PC.Pages.Admin.Subcategories.EditModel
+@{
+    ViewData["Title"] = "Editează subcategorie";
+}
+
+<h2>Editează subcategorie</h2>
+<form method="post">
+    <input type="hidden" asp-for="Subcategory.Id" />
+    <div class="mb-3">
+        <label asp-for="Subcategory.CategoryId" class="form-label">Categorie</label>
+        <select asp-for="Subcategory.CategoryId" asp-items="Model.CategoryOptions" class="form-select"></select>
+    </div>
+    <div class="mb-3">
+        <label asp-for="Subcategory.Name" class="form-label">Nume</label>
+        <input asp-for="Subcategory.Name" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-warning">Actualizează</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

@@ -1,0 +1,22 @@
+@page
+@model Recomandare_PC.Pages.Admin.Subcategories.CreateModel
+@{
+    ViewData["Title"] = "Subcategorie nouă";
+}
+
+<h2>Subcategorie nouă</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="Subcategory.CategoryId" class="form-label">Categorie</label>
+        <select asp-for="Subcategory.CategoryId" asp-items="Model.CategoryOptions" class="form-select">
+            <option value="">-- Selectează --</option>
+        </select>
+    </div>
+    <div class="mb-3">
+        <label asp-for="Subcategory.Name" class="form-label">Nume</label>
+        <input asp-for="Subcategory.Name" class="form-control" />
+        <span asp-validation-for="Subcategory.Name" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-success">Salvează</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

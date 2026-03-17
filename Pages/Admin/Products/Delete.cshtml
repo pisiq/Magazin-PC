@@ -1,0 +1,14 @@
+@page "{id:int}"
+@model Recomandare_PC.Pages.Admin.Products.DeleteModel
+@{
+    ViewData["Title"] = "Șterge produs";
+}
+
+<h2>Confirmi ștergerea produsului <strong>@Model.Product?.Name</strong>?</h2>
+<p>Preț: @Model.Product?.Price.ToString("F2") RON | Stoc: @Model.Product?.StockQuantity</p>
+
+<form method="post">
+    <input type="hidden" asp-for="Product!.Id" />
+    <button type="submit" class="btn btn-danger">Da, șterge</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

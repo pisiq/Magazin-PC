@@ -1,0 +1,95 @@
+@model IReadOnlyList<(Recomandare_PC.DTOs.ProductListDto Product, float Score)>
+@{
+    ViewData["Title"] = "Caută Produse";
+    var query = (string)(ViewBag.Query ?? "");
+    var selectedCategoryId = (int?)(ViewBag.CategoryId);
+    var categories = (IEnumerable<Recomandare_PC.Models.Category>)(ViewBag.Categories ?? Enumerable.Empty<Recomandare_PC.Models.Category>());
+}
+
+<h2 class="mb-4">Caută Produse</h2>
+
+@if (TempData["Message"] is string msg)
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @msg
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+}
+
+<!-- Search form -->
+<form method="get" asp-action="Search" class="row g-2 mb-4">
+    <div class="col-md-6">
+        <input type="text" name="q" value="@query" class="form-control"
+               placeholder="ex: RTX 4070, DDR5 32GB, Ryzen 7..." />
+    </div>
+    <div class="col-md-3">
+        <select name="categoryId" class="form-select">
+            <option value="">Toate categoriile</option>
+            @foreach (var cat in categories)
+            {
+                <option value="@cat.Id" selected="@(selectedCategoryId == cat.Id ? "selected" : null)">
+                    @cat.Name
+                </option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100">Caută</button>
+    </div>
+</form>
+
+<!-- Results -->
+@if (!string.IsNullOrEmpty(query))
+{
+    if (!Model.Any())
+    {
+        <div class="alert alert-warning">Nu s-au găsit produse pentru "<strong>@query</strong>".</div>
+    }
+    else
+    {
+        <p class="text-muted">@Model.Count rezultat(e) pentru "<strong>@query</strong>"</p>
+        <div class="row row-cols-1 row-cols-md-3 g-4">
+            @foreach (var (product, score) in Model)
+            {
+                <div class="col">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-body">
+                            <span class="badge bg-secondary mb-2">@product.CategoryName</span>
+                            @if (!string.IsNullOrEmpty(product.SubcategoryName))
+                            {
+                                <span class="badge bg-light text-dark mb-2">@product.SubcategoryName</span>
+                            }
+                            <h6 class="card-title">@product.Name</h6>
+                            <p class="card-text fw-bold text-primary fs-5">@product.Price.ToString("F2") RON</p>
+                            <p class="card-text text-muted small">
+                                Stoc: @product.StockQuantity buc &nbsp;|&nbsp; Scor: @score.ToString("F3")
+                            </p>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            @if (product.StockQuantity > 0)
+                            {
+                                <form method="post" asp-action="AddToCart">
+                                    <input type="hidden" name="productId" value="@product.Id" />
+                                    <input type="hidden" name="returnUrl" value="/Shop/Search?q=@Uri.EscapeDataString(query)@(selectedCategoryId.HasValue ? $"&categoryId={selectedCategoryId}" : "")" />
+                                    <button type="submit" class="btn btn-success btn-sm w-100">
+                                        + Adaugă în coș
+                                    </button>
+                                </form>
+                            }
+                            else
+                            {
+                                <button class="btn btn-secondary btn-sm w-100" disabled>Stoc epuizat</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+else
+{
+    <div class="text-center text-muted py-5">
+        <p class="fs-5">Introduceți un termen de căutare pentru a găsi componente.</p>
+    </div>
+}

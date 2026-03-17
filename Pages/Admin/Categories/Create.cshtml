@@ -1,0 +1,16 @@
+@page
+@model Recomandare_PC.Pages.Admin.Categories.CreateModel
+@{
+    ViewData["Title"] = "Categorie nouă";
+}
+
+<h2>Categorie nouă</h2>
+<form method="post">
+    <div class="mb-3">
+        <label asp-for="Category.Name" class="form-label">Nume</label>
+        <input asp-for="Category.Name" class="form-control" />
+        <span asp-validation-for="Category.Name" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-success">Salvează</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

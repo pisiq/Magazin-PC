@@ -1,0 +1,33 @@
+@page
+@model Recomandare_PC.Pages.Admin.Subcategories.IndexModel
+@{
+    ViewData["Title"] = "Subcategorii";
+}
+
+<h2>Subcategorii</h2>
+<a asp-page="Create" class="btn btn-primary mb-3">+ Subcategorie nouă</a>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Nume</th>
+            <th>Categorie părinte</th>
+            <th>Acțiuni</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var s in Model.Subcategories)
+        {
+            <tr>
+                <td>@s.Id</td>
+                <td>@s.Name</td>
+                <td>@s.Category.Name</td>
+                <td>
+                    <a asp-page="Edit" asp-route-id="@s.Id" class="btn btn-sm btn-warning">Editează</a>
+                    <a asp-page="Delete" asp-route-id="@s.Id" class="btn btn-sm btn-danger">Șterge</a>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>

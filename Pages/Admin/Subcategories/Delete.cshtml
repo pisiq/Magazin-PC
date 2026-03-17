@@ -1,0 +1,12 @@
+@page "{id:int}"
+@model Recomandare_PC.Pages.Admin.Subcategories.DeleteModel
+@{
+    ViewData["Title"] = "Șterge subcategorie";
+}
+
+<h2>Confirmi ștergerea subcategoriei <strong>@Model.Subcategory?.Name</strong>?</h2>
+<form method="post">
+    <input type="hidden" asp-for="Subcategory!.Id" />
+    <button type="submit" class="btn btn-danger">Da, șterge</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

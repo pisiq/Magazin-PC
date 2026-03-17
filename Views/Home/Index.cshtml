@@ -1,0 +1,87 @@
+@{
+    ViewData["Title"] = "Acasă";
+}
+
+<div class="py-4">
+    <h1 class="mb-1">PC Shop</h1>
+    <p class="text-muted mb-5">Selectează o secțiune pentru a continua.</p>
+
+    <h5 class="text-uppercase text-muted mb-3" style="letter-spacing:.05em; font-size:.8rem;">Magazine</h5>
+    <div class="row g-3 mb-5">
+        <div class="col-sm-6 col-md-4">
+            <a asp-controller="Shop" asp-action="Search" class="text-decoration-none">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body d-flex align-items-start gap-3 p-4">
+                        <span class="fs-2">🔍</span>
+                        <div>
+                            <h5 class="card-title mb-1">Caută Produse</h5>
+                            <p class="card-text text-muted small mb-0">Caută și filtrează componente PC disponibile în stoc.</p>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-sm-6 col-md-4">
+            <a asp-controller="Shop" asp-action="Checkout" class="text-decoration-none">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body d-flex align-items-start gap-3 p-4">
+                        <span class="fs-2">🛒</span>
+                        <div>
+                            <h5 class="card-title mb-1">
+                                Coș
+                                @if (ViewBag.CartCount is int count && count > 0)
+                                {
+                                    <span class="badge bg-danger ms-1">@count</span>
+                                }
+                            </h5>
+                            <p class="card-text text-muted small mb-0">Vezi coșul și primește recomandări AI pentru o configurație completă.</p>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <h5 class="text-uppercase text-muted mb-3" style="letter-spacing:.05em; font-size:.8rem;">Administrare</h5>
+    <div class="row g-3">
+        <div class="col-sm-6 col-md-4">
+            <a href="/Admin/Products" class="text-decoration-none">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body d-flex align-items-start gap-3 p-4">
+                        <span class="fs-2">🖥️</span>
+                        <div>
+                            <h5 class="card-title mb-1">Produse</h5>
+                            <p class="card-text text-muted small mb-0">Gestionează produsele: adaugă, editează, șterge și încarcă fișe tehnice PDF.</p>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-sm-6 col-md-4">
+            <a href="/Admin/Categories" class="text-decoration-none">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body d-flex align-items-start gap-3 p-4">
+                        <span class="fs-2">📂</span>
+                        <div>
+                            <h5 class="card-title mb-1">Categorii</h5>
+                            <p class="card-text text-muted small mb-0">Gestionează categoriile principale (CPU, GPU, RAM, etc.).</p>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-sm-6 col-md-4">
+            <a href="/Admin/Subcategories" class="text-decoration-none">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-body d-flex align-items-start gap-3 p-4">
+                        <span class="fs-2">🗂️</span>
+                        <div>
+                            <h5 class="card-title mb-1">Subcategorii</h5>
+                            <p class="card-text text-muted small mb-0">Gestionează subcategoriile (DDR4, DDR5, NVMe, SATA, etc.).</p>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+</div>

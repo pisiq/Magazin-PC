@@ -1,0 +1,125 @@
+@page "{id:int}"
+@model Recomandare_PC.Pages.Admin.Products.EditModel
+@{
+    ViewData["Title"] = "Editează produs";
+}
+
+<h2>Editează produs</h2>
+
+<form method="post" enctype="multipart/form-data">
+    <input type="hidden" asp-for="Product.Id" />
+    <input type="hidden" asp-for="Product.Specifications" />
+    <input type="hidden" asp-for="Product.PdfPath" />
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="mb-3">
+                <label asp-for="Product.Name" class="form-label">Nume produs</label>
+                <input asp-for="Product.Name" class="form-control" />
+                <span asp-validation-for="Product.Name" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Product.CategoryId" class="form-label">Categorie</label>
+                <select asp-for="Product.CategoryId" asp-items="Model.CategoryOptions"
+                        class="form-select" id="categorySelect">
+                    <option value="">-- Selectează --</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Product.SubcategoryId" class="form-label">Subcategorie (opțional)</label>
+                <select asp-for="Product.SubcategoryId" class="form-select" id="subcategorySelect">
+                    <option value="">-- Niciuna --</option>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Product.Price" class="form-label">Preț (RON)</label>
+                <input asp-for="Product.Price" class="form-control" type="number" step="0.01" />
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Product.StockQuantity" class="form-label">Stoc</label>
+                <input asp-for="Product.StockQuantity" class="form-control" type="number" />
+            </div>
+
+            <div class="mb-3">
+                <label for="PdfFile" class="form-label">
+                    Înlocuiește PDF
+                    @if (!string.IsNullOrEmpty(Model.Product.PdfPath))
+                    {
+                        <small>— <a href="/@Model.Product.PdfPath" target="_blank">fișier curent</a></small>
+                    }
+                </label>
+                <input type="file" name="PdfFile" id="PdfFile" accept=".pdf" class="form-control" />
+                <div id="pdfStatus" class="form-text text-muted">
+                    Dacă încarci un PDF nou, categoria va fi re-detectată automat.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-warning">Actualizează</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>
+
+@section Scripts {
+<script>
+const allSubs = @Html.Raw(Model.SubcategoryJson);
+const categorySelect = document.getElementById('categorySelect');
+const subcategorySelect = document.getElementById('subcategorySelect');
+const pdfInput = document.getElementById('PdfFile');
+const pdfStatus = document.getElementById('pdfStatus');
+const initialSubId = @(Model.Product.SubcategoryId?.ToString() ?? "null");
+
+function filterSubcategories(categoryId, selectedSubId) {
+    const filtered = allSubs.filter(s => !categoryId || s.categoryId == categoryId);
+    subcategorySelect.innerHTML = '<option value="">-- Niciuna --</option>';
+    filtered.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        if (selectedSubId && s.id == selectedSubId) opt.selected = true;
+        subcategorySelect.appendChild(opt);
+    });
+}
+
+categorySelect.addEventListener('change', () => filterSubcategories(categorySelect.value, null));
+
+// Initial render with current product's subcategory selected
+filterSubcategories(categorySelect.value, initialSubId);
+
+// PDF analysis
+pdfInput.addEventListener('change', async () => {
+    if (!pdfInput.files?.length) return;
+
+    pdfStatus.textContent = 'Se analizează PDF-ul...';
+    pdfStatus.className = 'form-text text-info';
+
+    const formData = new FormData();
+    formData.append('pdfFile', pdfInput.files[0]);
+
+    try {
+        const resp = await fetch('/api/products/analyze-pdf', { method: 'POST', body: formData });
+        if (!resp.ok) { pdfStatus.textContent = 'Eroare la analiza PDF.'; pdfStatus.className = 'form-text text-danger'; return; }
+
+        const data = await resp.json();
+
+        if (data.categoryId) {
+            categorySelect.value = data.categoryId;
+            filterSubcategories(data.categoryId, data.subcategoryId);
+        }
+
+        const detected = [data.suggestedCategoryName, data.suggestedSubcategoryName].filter(Boolean).join(' / ');
+        pdfStatus.textContent = detected
+            ? `Detectat: ${detected} — câmpurile au fost actualizate.`
+            : 'PDF analizat — categorie nedetectată, selectați manual.';
+        pdfStatus.className = 'form-text ' + (detected ? 'text-success' : 'text-warning');
+    } catch {
+        pdfStatus.textContent = 'Eroare la analiza PDF.';
+        pdfStatus.className = 'form-text text-danger';
+    }
+});
+</script>
+}

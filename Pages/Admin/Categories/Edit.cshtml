@@ -1,0 +1,17 @@
+@page "{id:int}"
+@model Recomandare_PC.Pages.Admin.Categories.EditModel
+@{
+    ViewData["Title"] = "Editează categorie";
+}
+
+<h2>Editează categorie</h2>
+<form method="post">
+    <input type="hidden" asp-for="Category.Id" />
+    <div class="mb-3">
+        <label asp-for="Category.Name" class="form-label">Nume</label>
+        <input asp-for="Category.Name" class="form-control" />
+        <span asp-validation-for="Category.Name" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-warning">Actualizează</button>
+    <a asp-page="Index" class="btn btn-secondary">Anulează</a>
+</form>

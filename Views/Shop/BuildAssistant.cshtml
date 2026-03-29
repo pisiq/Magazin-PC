@@ -1,0 +1,113 @@
+﻿@model Recomandare_PC.Models.BuildAssistantViewModel
+@{
+    ViewData["Title"] = "Configurator PC (AI)";
+    var rec = Model.Recommendation;
+}
+
+<h2 class="mb-3">Configurator PC cu recomandari AI</h2>
+<p class="text-muted">
+    Completeaza ce componente ai deja. Pentru campurile ramase goale, sistemul cere recomandari Gemini
+    din produsele aflate in stoc, tinand cont de compatibilitatea configuratiei.
+</p>
+
+<form method="post" asp-action="BuildAssistant" class="card p-3 mb-4">
+    @Html.AntiForgeryToken()
+
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label asp-for="Cpu" class="form-label">CPU</label>
+            <input asp-for="Cpu" class="form-control" placeholder="ex: AMD Ryzen 7 7700X" />
+        </div>
+        <div class="col-md-6">
+            <label asp-for="Gpu" class="form-label">GPU</label>
+            <input asp-for="Gpu" class="form-control" placeholder="ex: NVIDIA GeForce RTX 4070" />
+        </div>
+
+        <div class="col-md-6">
+            <label asp-for="Ram" class="form-label">RAM</label>
+            <input asp-for="Ram" class="form-control" placeholder="ex: DDR5 32GB 6000MHz" />
+        </div>
+        <div class="col-md-6">
+            <label asp-for="Motherboard" class="form-label">Motherboard</label>
+            <input asp-for="Motherboard" class="form-control" placeholder="ex: ASUS PRIME B650-PLUS" />
+        </div>
+
+        <div class="col-md-6">
+            <label asp-for="Psu" class="form-label">PSU</label>
+            <input asp-for="Psu" class="form-control" placeholder="ex: 750W 80+ Gold" />
+        </div>
+        <div class="col-md-6">
+            <label asp-for="Storage" class="form-label">Storage</label>
+            <input asp-for="Storage" class="form-control" placeholder="ex: 1TB NVMe" />
+        </div>
+
+        <div class="col-md-6">
+            <label asp-for="CoolingPreference" class="form-label">Cooling preference</label>
+            <select asp-for="CoolingPreference" class="form-select">
+                <option value="">Alege (optional)</option>
+                <option value="Air">Air</option>
+                <option value="Liquid">Liquid</option>
+            </select>
+        </div>
+
+        <div class="col-md-4">
+            <label asp-for="Budget" class="form-label">Buget (optional)</label>
+            <input asp-for="Budget" class="form-control" type="number" min="0" step="0.01" placeholder="ex: 4500" />
+        </div>
+    </div>
+
+    <div class="mt-3 d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Genereaza recomandari</button>
+        <a asp-action="Search" class="btn btn-outline-secondary">Vezi produse</a>
+    </div>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
+{
+    <div class="alert alert-danger">@Model.ErrorMessage</div>
+}
+
+@if (rec is not null)
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex align-items-center gap-2">
+            <span class="badge bg-primary">AI</span>
+            <strong>Recomandari pentru componentele lipsa</strong>
+        </div>
+        <div class="card-body">
+            @if (!string.IsNullOrWhiteSpace(rec.Explanation))
+            {
+                <p class="text-muted fst-italic">@rec.Explanation</p>
+            }
+
+            @if (!rec.Recommendations.Any())
+            {
+                <p class="mb-0 text-success">Configuratia este deja completa.</p>
+            }
+            else
+            {
+                <div class="row g-3">
+                    @foreach (var item in rec.Recommendations)
+                    {
+                        <div class="col-md-6">
+                            <div class="card h-100 border-primary">
+                                <div class="card-body">
+                                    <span class="badge bg-primary mb-1">@item.Category</span>
+                                    <h6 class="card-title">@item.ProductName</h6>
+                                    <p class="text-primary fw-bold mb-1">@item.Price.ToString("F2") RON</p>
+                                    <p class="text-muted small mb-0">@item.Reason</p>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<div class="alert alert-info">
+    Pentru integrarea cu telefonul prin WiFi, endpoint-ul pregatit este
+    <code>POST /api/build-assistant/recommend</code> si accepta JSON cu aceste campuri.
+</div>
+

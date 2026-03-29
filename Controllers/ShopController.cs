@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Recomandare_PC.Data;
+using Recomandare_PC.DTOs;
 using Recomandare_PC.Models;
 using Recomandare_PC.Services;
 using System.Text.Json;
@@ -10,7 +11,8 @@ namespace Recomandare_PC.Controllers;
 public class ShopController(
     AppDbContext db,
     ILuceneSearchService luceneSearch,
-    IGeminiRecommendationService geminiService) : Controller
+    ILlmRecommendationService llmRecommendationService,
+    ILogger<ShopController> logger) : Controller
 {
     private const string CartKey = "Cart";
 
@@ -79,17 +81,40 @@ public class ShopController(
 
     // ── Checkout ─────────────────────────────────────────────────────────────────
 
+    // GET /Shop/BuildAssistant
+    public IActionResult BuildAssistant()
+    {
+        ViewBag.CartCount = GetCart().Count;
+        return View(new BuildAssistantViewModel());
+    }
+
+    // POST /Shop/BuildAssistant
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuildAssistant(BuildAssistantViewModel model)
+    {
+        ViewBag.CartCount = GetCart().Count;
+
+        try
+        {
+            var request = model.ToRequestDto().ToRecommendationRequest();
+            model.Recommendation = await llmRecommendationService.RecommendAsync(request);
+        }
+        catch (Exception ex)
+        {
+            model.ErrorMessage = "Nu am putut genera recomandarile in acest moment. Incearca din nou.";
+            logger.LogError(ex, "BuildAssistant recommendation failed");
+        }
+
+        return View(model);
+    }
+
     // GET /Shop/Checkout
-    public async Task<IActionResult> Checkout()
+    public IActionResult Checkout()
     {
         var cart = GetCart();
 
-        GeminiRecommendationResult? recommendations = null;
-        if (cart.Count > 0)
-            recommendations = await geminiService.RecommendAsync(cart);
-
-        ViewBag.CartCount       = cart.Count;
-        ViewBag.Recommendations = recommendations;
+        ViewBag.CartCount = cart.Count;
 
         return View(cart);
     }

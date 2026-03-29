@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Net;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,6 +40,9 @@ public class LlmRecommendationService(
             .Where(c => !existingCategoryNames.Contains(c))
             .ToList();
 
+        if (missingCategories.Count == 0)
+            return new RecommendationResponse([], "Configuratia este completa - toate categoriile sunt acoperite.");
+
         // 2. Fetch in-stock candidates for the missing categories
         var candidates = await db.Products
             .Include(p => p.Category)
@@ -46,18 +51,22 @@ public class LlmRecommendationService(
                         missingCategories.Contains(p.Category.Name))
             .OrderBy(p => p.CategoryId)
             .ThenBy(p => p.Price)
-            .Take(60) // keep context reasonable
+            .Take(24) // tighter prompt budget to reduce token pressure
             .Select(p => new
             {
                 p.Id,
                 p.Name,
                 p.Price,
-                p.StockQuantity,
                 Category = p.Category.Name,
-                Subcategory = p.Subcategory == null ? null : p.Subcategory.Name,
-                p.Specifications
+                Subcategory = p.Subcategory == null ? null : p.Subcategory.Name
             })
             .ToListAsync();
+
+        logger.LogDebug(
+            "AI recommendation request prepared. Existing={ExistingCount}, Missing={MissingCount}, Candidates={CandidateCount}",
+            request.ExistingComponents.Count,
+            missingCategories.Count,
+            candidates.Count);
 
         if (candidates.Count == 0)
         {
@@ -66,11 +75,24 @@ public class LlmRecommendationService(
 
         // 3. Build the prompt
         var prompt = BuildPrompt(request, missingCategories, candidates
-            .Select(c => new CandidateInfo(c.Id, c.Name, c.Price, c.Category, c.Subcategory, c.Specifications))
+            .Select(c => new CandidateInfo(c.Id, c.Name, c.Price, c.Category, c.Subcategory))
             .ToList());
 
-        // 4. Call the LLM
-        var llmRaw = await CallLlmAsync(prompt);
+        string llmRaw;
+        try
+        {
+            // 4. Call the LLM
+            llmRaw = await CallLlmAsync(prompt);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return new RecommendationResponse([], "Too many requests to AI provider. Please wait 20-60 seconds and try again.");
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "LLM request failed");
+            return new RecommendationResponse([], "AI service is temporarily unavailable. Please try again shortly.");
+        }
 
         // 5. Deserialize the strict JSON response
         return DeserializeLlmResponse(llmRaw);
@@ -97,8 +119,8 @@ public class LlmRecommendationService(
         else
             sb.AppendLine("- (none)");
 
-        if (!string.IsNullOrWhiteSpace(request.UseCase))
-            sb.AppendLine($"\n## Use case: {request.UseCase}");
+        if (!string.IsNullOrWhiteSpace(request.CoolingPreference))
+            sb.AppendLine($"\n## Preferred cooling style: {request.CoolingPreference}");
 
         if (request.Budget.HasValue)
             sb.AppendLine($"## Total budget: {request.Budget:F2}");
@@ -130,7 +152,7 @@ public class LlmRecommendationService(
   "explanation": "string (overall summary, max 200 chars)"
 }
 """);
-
+        Console.WriteLine(sb.ToString());
         return sb.ToString();
     }
 
@@ -142,8 +164,8 @@ public class LlmRecommendationService(
     {
         var apiKey = config["Llm:ApiKey"]
             ?? throw new InvalidOperationException("Llm:ApiKey is not configured.");
-        var model = config["Llm:Model"] ?? "gpt-4o-mini";
-        var endpoint = config["Llm:Endpoint"] ?? "https://api.openai.com/v1/chat/completions";
+        var model = config["Llm:Model"] ;
+        var endpoint = config["Llm:Endpoint"] ;
 
         var requestBody = new
         {
@@ -161,15 +183,42 @@ public class LlmRecommendationService(
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", apiKey);
 
+        var timer = Stopwatch.StartNew();
+        logger.LogDebug(
+            "Calling AI endpoint. Model={Model}, Endpoint={Endpoint}, PromptChars={PromptChars}, PayloadBytes={PayloadBytes}",
+            model,
+            endpoint,
+            prompt.Length,
+            Encoding.UTF8.GetByteCount(json));
+
+        var payloadBytes = Encoding.UTF8.GetByteCount(json);
+
         var response = await client.PostAsync(
             endpoint,
             new StringContent(json, Encoding.UTF8, "application/json"));
+        timer.Stop();
+        logger.LogDebug(
+            "AI endpoint responded. Status={StatusCode}, DurationMs={DurationMs}",
+            (int)response.StatusCode,
+            timer.ElapsedMilliseconds);
 
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync();
-            logger.LogError("LLM API error {Status}: {Body}", response.StatusCode, error);
-            throw new HttpRequestException($"LLM API returned {response.StatusCode}");
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                var retryAfter = response.Headers.RetryAfter?.Delta;
+                logger.LogWarning(
+                    "LLM API 429. RetryAfterSeconds={RetryAfterSeconds}, PromptChars={PromptChars}, PayloadBytes={PayloadBytes}, Body={Body}",
+                    retryAfter.HasValue ? Math.Max(1, (int)Math.Ceiling(retryAfter.Value.TotalSeconds)) : null,
+                    prompt.Length,
+                    payloadBytes,
+                    error);
+            }
+            else
+                logger.LogError("LLM API error {Status}: {Body}", response.StatusCode, error);
+
+            throw new HttpRequestException($"LLM API returned {response.StatusCode}", null, response.StatusCode);
         }
 
         using var stream = await response.Content.ReadAsStreamAsync();
@@ -217,7 +266,7 @@ public class LlmRecommendationService(
 
     private sealed record CandidateInfo(
         int Id, string Name, decimal Price,
-        string Category, string? Subcategory, string? Specifications);
+        string Category, string? Subcategory);
 
     private sealed class LlmJsonResponse
     {

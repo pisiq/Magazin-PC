@@ -4,6 +4,15 @@ using Recomandare_PC.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Logging: keep detailed diagnostics visible in terminal for API debugging ────
+builder.Logging.ClearProviders();
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.TimestampFormat = "HH:mm:ss ";
+    options.SingleLine = true;
+});
+builder.Logging.AddDebug();
+
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -29,11 +38,9 @@ builder.Services.AddScoped<IPdfExtractionService, PdfExtractionService>();
 builder.Services.AddScoped<IProductSearchService, ProductSearchService>();
 builder.Services.AddScoped<ILlmRecommendationService, LlmRecommendationService>();
 builder.Services.AddSingleton<ILuceneSearchService, LuceneSearchService>();
-builder.Services.AddScoped<IGeminiRecommendationService, GeminiRecommendationService>();
 
 // Named HttpClient for LLM calls
 builder.Services.AddHttpClient("LlmClient");
-builder.Services.AddHttpClient("GeminiClient");
 
 // ── Network: listen on all interfaces so LAN clients can reach the server ─────
 builder.WebHost.UseUrls(
@@ -63,6 +70,6 @@ app.MapControllers();
 // MVC convention routing (Shop UI)
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}");
+    pattern: "{controller=Shop}/{action=Search}/{id?}");
 
 app.Run();

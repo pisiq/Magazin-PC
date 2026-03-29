@@ -15,9 +15,9 @@ public record RecommendationRequest(
     decimal? Budget,
 
     /// <summary>
-    /// Optional usage context, e.g. "gaming 1080p", "video editing".
+    /// Optional preferred cooling style for the system.
     /// </summary>
-    string? UseCase
+    string? CoolingPreference
 );
 
 public record ExistingComponent(string Category, string Name);

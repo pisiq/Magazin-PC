@@ -10,7 +10,7 @@
     din produsele aflate in stoc, tinand cont de compatibilitatea configuratiei.
 </p>
 
-<form method="post" asp-action="BuildAssistant" class="card p-3 mb-4">
+<form id="buildAssistantForm" method="post" asp-action="BuildAssistant" class="card p-3 mb-4">
     @Html.AntiForgeryToken()
 
     <div class="row g-3">
@@ -57,7 +57,13 @@
     </div>
 
     <div class="mt-3 d-flex gap-2">
-        <button type="submit" class="btn btn-primary">Genereaza recomandari</button>
+        <button id="generateBtn" type="submit" class="btn btn-primary">
+            <span id="generateBtnText">Genereaza recomandari</span>
+            <span id="generateBtnLoading" class="d-none">
+                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                Se incarca...
+            </span>
+        </button>
         <a asp-action="Search" class="btn btn-outline-secondary">Vezi produse</a>
     </div>
 </form>
@@ -86,16 +92,41 @@
             }
             else
             {
-                <div class="row g-3">
-                    @foreach (var item in rec.Recommendations)
+                var groupedRecommendations = rec.Recommendations
+                    .OrderBy(r => r.Category)
+                    .ThenBy(r => r.Price)
+                    .GroupBy(r => r.Category)
+                    .ToList();
+
+                <div class="accordion" id="recommendationCategories">
+                    @for (var i = 0; i < groupedRecommendations.Count; i++)
                     {
-                        <div class="col-md-6">
-                            <div class="card h-100 border-primary">
-                                <div class="card-body">
-                                    <span class="badge bg-primary mb-1">@item.Category</span>
-                                    <h6 class="card-title">@item.ProductName</h6>
-                                    <p class="text-primary fw-bold mb-1">@item.Price.ToString("F2") RON</p>
-                                    <p class="text-muted small mb-0">@item.Reason</p>
+                        var group = groupedRecommendations[i];
+                        var headingId = $"heading-{i}";
+                        var collapseId = $"collapse-{i}";
+
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="@headingId">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#@collapseId" aria-expanded="false" aria-controls="@collapseId">
+                                    @group.Key (@group.Count())
+                                </button>
+                            </h2>
+                            <div id="@collapseId" class="accordion-collapse collapse" aria-labelledby="@headingId" data-bs-parent="#recommendationCategories">
+                                <div class="accordion-body">
+                                    <div class="row g-3">
+                                        @foreach (var item in group)
+                                        {
+                                            <div class="col-md-6">
+                                                <div class="card h-100 border-primary">
+                                                    <div class="card-body">
+                                                        <h6 class="card-title">@item.ProductName</h6>
+                                                        <p class="text-primary fw-bold mb-1">@item.Price.ToString("F2") RON</p>
+                                                        <p class="text-muted small mb-0">@item.Reason</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -110,4 +141,23 @@
     Pentru integrarea cu telefonul prin WiFi, endpoint-ul pregatit este
     <code>POST /api/build-assistant/recommend</code> si accepta JSON cu aceste campuri.
 </div>
+
+<script>
+    (function () {
+        const form = document.getElementById("buildAssistantForm");
+        const submitButton = document.getElementById("generateBtn");
+        const normalText = document.getElementById("generateBtnText");
+        const loadingText = document.getElementById("generateBtnLoading");
+
+        if (!form || !submitButton || !normalText || !loadingText) {
+            return;
+        }
+
+        form.addEventListener("submit", function () {
+            submitButton.disabled = true;
+            normalText.classList.add("d-none");
+            loadingText.classList.remove("d-none");
+        });
+    })();
+</script>
 

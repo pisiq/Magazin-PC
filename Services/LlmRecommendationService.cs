@@ -22,6 +22,8 @@ public class LlmRecommendationService(
     IConfiguration config,
     ILogger<LlmRecommendationService> logger) : ILlmRecommendationService
 {
+    private const int MaxRecommendationsPerCategory = 2;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -44,6 +46,8 @@ public class LlmRecommendationService(
             return new RecommendationResponse([], "Configuratia este completa - toate categoriile sunt acoperite.");
 
         // 2. Fetch in-stock candidates for the missing categories
+        var candidateTakeLimit = Math.Max(24, missingCategories.Count * 8);
+
         var candidates = await db.Products
             .Include(p => p.Category)
             .Include(p => p.Subcategory)
@@ -51,7 +55,7 @@ public class LlmRecommendationService(
                         missingCategories.Contains(p.Category.Name))
             .OrderBy(p => p.CategoryId)
             .ThenBy(p => p.Price)
-            .Take(24) // tighter prompt budget to reduce token pressure
+            .Take(candidateTakeLimit)
             .Select(p => new
             {
                 p.Id,
@@ -74,9 +78,11 @@ public class LlmRecommendationService(
         }
 
         // 3. Build the prompt
-        var prompt = BuildPrompt(request, missingCategories, candidates
+        var candidateInfos = candidates
             .Select(c => new CandidateInfo(c.Id, c.Name, c.Price, c.Category, c.Subcategory))
-            .ToList());
+            .ToList();
+
+        var prompt = BuildPrompt(request, missingCategories, candidateInfos);
 
         string llmRaw;
         try
@@ -94,8 +100,9 @@ public class LlmRecommendationService(
             return new RecommendationResponse([], "AI service is temporarily unavailable. Please try again shortly.");
         }
 
-        // 5. Deserialize the strict JSON response
-        return DeserializeLlmResponse(llmRaw);
+        // 5. Deserialize and normalize to max 2 items/category, aligned to budget when possible
+        var rawResponse = DeserializeLlmResponse(llmRaw);
+        return NormalizeRecommendations(rawResponse, candidateInfos, missingCategories, request.Budget);
     }
 
     // -------------------------------------------------------------------------
@@ -131,12 +138,24 @@ public class LlmRecommendationService(
             sb.AppendLine($"- {m}");
 
         sb.AppendLine();
-        sb.AppendLine("## Available in-stock products (choose ONE per missing category):");
+        sb.AppendLine("## Available in-stock products (choose MAXIMUM 2 products per missing category):");
         sb.AppendLine(JsonSerializer.Serialize(candidates, JsonOpts));
 
         sb.AppendLine();
         sb.AppendLine("## Instructions:");
         sb.AppendLine("- Respond ONLY with a valid JSON object — no markdown, no explanation outside JSON.");
+        sb.AppendLine("- Return up to 2 recommendations for EACH missing category (if compatible products exist).");
+        if (request.Budget.HasValue)
+        {
+            sb.AppendLine("- Respect the total budget as much as possible across all selected products.");
+            sb.AppendLine("- If full budget fit is impossible, still return up to 2 per missing category, choosing options closest to the budget.");
+        }
+        else
+        {
+            sb.AppendLine("- If budget is not provided, prioritize compatibility and best value.");
+        }
+        sb.AppendLine("- Prefer products from different categories when possible.");
+        sb.AppendLine("- Pick only products from the provided in-stock list.");
         sb.AppendLine("- Use exactly this schema:");
         sb.AppendLine("""
 {
@@ -258,6 +277,121 @@ public class LlmRecommendationService(
             logger.LogError(ex, "Failed to parse LLM JSON response: {Raw}", raw);
             return new RecommendationResponse([], $"Could not parse LLM response. Raw: {raw[..Math.Min(200, raw.Length)]}");
         }
+    }
+
+    private RecommendationResponse NormalizeRecommendations(
+        RecommendationResponse response,
+        List<CandidateInfo> candidates,
+        List<string> missingCategories,
+        decimal? totalBudget)
+    {
+        var candidateById = candidates.ToDictionary(c => c.Id);
+        var candidatesByCategory = candidates
+            .GroupBy(c => c.Category, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        var categoryOrder = missingCategories
+            .Where(c => candidatesByCategory.ContainsKey(c))
+            .ToList();
+
+        var targetPerCategory = categoryOrder.Count > 0 && totalBudget.HasValue
+            ? totalBudget.Value / categoryOrder.Count
+            : (decimal?)null;
+
+        var normalized = new List<RecommendedItem>();
+        var usedProductIds = new HashSet<int>();
+        var selectedByCategory = new Dictionary<string, List<RecommendedItem>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var category in categoryOrder)
+            selectedByCategory[category] = [];
+
+        foreach (var rec in response.Recommendations)
+        {
+            if (!candidateById.TryGetValue(rec.ProductId, out var candidate))
+                continue;
+
+            if (!usedProductIds.Add(candidate.Id))
+                continue;
+
+            if (!selectedByCategory.TryGetValue(candidate.Category, out var selectedInCategory))
+                continue;
+
+            if (selectedInCategory.Count >= MaxRecommendationsPerCategory)
+                continue;
+
+            var normalizedItem = new RecommendedItem(
+                candidate.Category,
+                candidate.Id,
+                candidate.Name,
+                candidate.Price,
+                NormalizeReason(rec.Reason));
+
+            selectedInCategory.Add(normalizedItem);
+            normalized.Add(normalizedItem);
+        }
+
+        foreach (var category in categoryOrder)
+        {
+            var selectedInCategory = selectedByCategory[category];
+            if (selectedInCategory.Count >= MaxRecommendationsPerCategory)
+                continue;
+
+            var orderedFallback = OrderCandidatesByBudget(candidatesByCategory[category], targetPerCategory);
+
+            foreach (var candidate in orderedFallback)
+            {
+                if (selectedInCategory.Count >= MaxRecommendationsPerCategory)
+                    break;
+
+                if (!usedProductIds.Add(candidate.Id))
+                    continue;
+
+                var fallbackReason = totalBudget.HasValue
+                    ? "Alegere fallback: compatibila si cat mai aproape de bugetul alocat categoriei."
+                    : "Alegere fallback din stoc pentru compatibilitate.";
+
+                var fallbackItem = new RecommendedItem(
+                    candidate.Category,
+                    candidate.Id,
+                    candidate.Name,
+                    candidate.Price,
+                    fallbackReason);
+
+                selectedInCategory.Add(fallbackItem);
+                normalized.Add(fallbackItem);
+            }
+        }
+
+        var explanation = string.IsNullOrWhiteSpace(response.Explanation)
+            ? "Am generat recomandari pe baza componentelor existente si a stocului disponibil."
+            : response.Explanation.Trim();
+
+        return new RecommendationResponse(normalized, explanation);
+    }
+
+    private static string NormalizeReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "Compatibila cu setup-ul si disponibila in stoc.";
+
+        var trimmed = reason.Trim();
+        return trimmed.Length <= 120 ? trimmed : trimmed[..120];
+    }
+
+    private static IEnumerable<CandidateInfo> OrderCandidatesByBudget(
+        IEnumerable<CandidateInfo> candidates,
+        decimal? targetPerCategory)
+    {
+        if (!targetPerCategory.HasValue || targetPerCategory.Value <= 0)
+            return candidates.OrderBy(c => c.Price).ThenBy(c => c.Name);
+
+        var target = targetPerCategory.Value;
+
+        return candidates
+            .OrderBy(c => Math.Abs(c.Price - target))
+            .ThenBy(c => c.Price > target)
+            .ThenBy(c => c.Price)
+            .ThenBy(c => c.Name);
     }
 
     // -------------------------------------------------------------------------

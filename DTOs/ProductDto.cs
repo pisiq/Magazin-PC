@@ -18,3 +18,12 @@ public record ProductListDto(
     string CategoryName,
     string? SubcategoryName
 );
+
+public record AutocompleteSuggestionDto(
+    int Id,
+    string Name,
+    string CategoryName,
+    string? SubcategoryName,
+    double Score
+);
+

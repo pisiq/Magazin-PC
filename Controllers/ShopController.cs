@@ -10,7 +10,8 @@ namespace Recomandare_PC.Controllers;
 
 public class ShopController(
     AppDbContext db,
-    ILuceneSearchService luceneSearch,
+    IProductSearchService productSearch,
+    ISimilarProductsService similarProductsService,
     ILlmRecommendationService llmRecommendationService,
     ILogger<ShopController> logger) : Controller
 {
@@ -32,11 +33,9 @@ public class ShopController(
     // GET /Shop/Search
     public async Task<IActionResult> Search(string? q, int? categoryId)
     {
-        await luceneSearch.EnsureIndexAsync();
-
         var results = string.IsNullOrWhiteSpace(q)
             ? []
-            : luceneSearch.Search(q, 30, categoryId);
+            : await productSearch.SearchAsync(q, 30, categoryId);
 
         ViewBag.Query      = q ?? "";
         ViewBag.CategoryId = categoryId;
@@ -44,6 +43,38 @@ public class ShopController(
         ViewBag.CartCount  = GetCart().Count;
 
         return View(results);
+    }
+
+    // GET /Shop/Product/{id}
+    public async Task<IActionResult> Product(int id)
+    {
+        var product = await db.Products
+            .Include(p => p.Category)
+            .Include(p => p.Subcategory)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == id);
+
+        if (product is null)
+            return NotFound();
+
+        var specs = ParseSpecifications(product.Specifications);
+        var similar = await similarProductsService.GetSimilarProductsAsync(product.Id, 6);
+
+        ViewBag.CartCount = GetCart().Count;
+
+        return View(new ProductDetailsViewModel
+        {
+            Product = new ProductDto(
+                product.Id,
+                product.Name,
+                product.Price,
+                product.StockQuantity,
+                product.Category.Name,
+                product.Subcategory?.Name,
+                product.Specifications),
+            Specifications = specs,
+            SimilarProducts = similar
+        });
     }
 
     // ── Cart ─────────────────────────────────────────────────────────────────────
@@ -127,5 +158,24 @@ public class ShopController(
         TempData["OrderConfirmed"] = true;
 
         return RedirectToAction(nameof(Checkout));
+    }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> ParseSpecifications(string? specificationsJson)
+    {
+        if (string.IsNullOrWhiteSpace(specificationsJson))
+            return [];
+
+        try
+        {
+            var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(specificationsJson);
+            if (dict is null || dict.Count == 0)
+                return [];
+
+            return dict.ToList();
+        }
+        catch
+        {
+            return [new KeyValuePair<string, string>("Detalii", specificationsJson)];
+        }
     }
 }

@@ -1,0 +1,94 @@
+﻿@model Recomandare_PC.Models.ProductDetailsViewModel
+@{
+    ViewData["Title"] = Model.Product.Name;
+}
+
+<div class="mb-3">
+    <a asp-action="Search" class="btn btn-outline-secondary btn-sm">&larr; Inapoi la cautare</a>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <span class="badge bg-secondary mb-2">@Model.Product.CategoryName</span>
+                @if (!string.IsNullOrWhiteSpace(Model.Product.SubcategoryName))
+                {
+                    <span class="badge bg-light text-dark mb-2">@Model.Product.SubcategoryName</span>
+                }
+
+                <h3 class="mb-2">@Model.Product.Name</h3>
+                <p class="text-primary fw-bold fs-4">@Model.Product.Price.ToString("F2") RON</p>
+                <p class="text-muted">Stoc disponibil: @Model.Product.StockQuantity buc</p>
+
+                @if (Model.Product.StockQuantity > 0)
+                {
+                    <form method="post" asp-action="AddToCart" class="mt-3">
+                        <input type="hidden" name="productId" value="@Model.Product.Id" />
+                        <input type="hidden" name="returnUrl" value="/Shop/Product/@Model.Product.Id" />
+                        <button type="submit" class="btn btn-success">+ Adauga in cos</button>
+                    </form>
+                }
+                else
+                {
+                    <button class="btn btn-secondary mt-3" disabled>Stoc epuizat</button>
+                }
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-4">
+            <div class="card-header"><strong>Specificatii</strong></div>
+            <div class="card-body p-0">
+                @if (!Model.Specifications.Any())
+                {
+                    <div class="p-3 text-muted">Nu exista specificatii tehnice disponibile.</div>
+                }
+                else
+                {
+                    <table class="table table-striped mb-0">
+                        <tbody>
+                            @foreach (var spec in Model.Specifications)
+                            {
+                                <tr>
+                                    <th style="width: 35%">@spec.Key</th>
+                                    <td>@spec.Value</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-header"><strong>Produse similare (TF-IDF + cosine)</strong></div>
+            <div class="list-group list-group-flush">
+                @if (!Model.SimilarProducts.Any())
+                {
+                    <div class="p-3 text-muted">Nu exista produse similare pentru acest articol.</div>
+                }
+                else
+                {
+                    @foreach (var (product, score) in Model.SimilarProducts)
+                    {
+                        <a asp-action="Product" asp-route-id="@product.Id" class="list-group-item list-group-item-action">
+                            <div class="d-flex justify-content-between gap-2">
+                                <div>
+                                    <div class="fw-semibold">@product.Name</div>
+                                    <small class="text-muted">@product.CategoryName</small>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fw-bold text-primary">@product.Price.ToString("F2") RON</div>
+                                    <small class="text-muted">Scor: @score.ToString("F3")</small>
+                                </div>
+                            </div>
+                        </a>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+

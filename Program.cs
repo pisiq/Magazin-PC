@@ -36,6 +36,7 @@ builder.Services.AddSession(options =>
 // ── Application Services ──────────────────────────────────────────────────────
 builder.Services.AddScoped<IPdfExtractionService, PdfExtractionService>();
 builder.Services.AddScoped<IProductSearchService, ProductSearchService>();
+builder.Services.AddScoped<ISimilarProductsService, SimilarProductsService>();
 builder.Services.AddScoped<ILlmRecommendationService, LlmRecommendationService>();
 builder.Services.AddSingleton<ILuceneSearchService, LuceneSearchService>();
 
@@ -56,9 +57,6 @@ using (var scope = app.Services.CreateScope())
     await DataSeeder.SeedProductsAsync(db);
 }
 
-// ── Build Lucene index on startup ─────────────────────────────────────────────
-var lucene = app.Services.GetRequiredService<ILuceneSearchService>();
-await lucene.RebuildIndexAsync();
 
 app.UseStaticFiles();       // serves wwwroot/ including uploaded PDFs
 app.UseSession();

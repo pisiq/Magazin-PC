@@ -1,4 +1,4 @@
-@model IReadOnlyList<(Recomandare_PC.DTOs.ProductListDto Product, float Score)>
+@model IReadOnlyList<(Recomandare_PC.DTOs.ProductListDto Product, double Score)>
 @{
     ViewData["Title"] = "Caută Produse";
     var query = (string)(ViewBag.Query ?? "");
@@ -17,10 +17,11 @@
 }
 
 <!-- Search form -->
-<form method="get" asp-action="Search" class="row g-2 mb-4">
-    <div class="col-md-6">
-        <input type="text" name="q" value="@query" class="form-control"
+<form method="get" asp-action="Search" class="row g-2 mb-4" autocomplete="off">
+    <div class="col-md-6 position-relative">
+        <input type="text" name="q" value="@query" class="form-control" id="searchQuery"
                placeholder="ex: RTX 4070, DDR5 32GB, Ryzen 7..." />
+        <div id="autocompleteResults" class="list-group position-absolute w-100 mt-1 shadow-sm d-none" style="z-index: 1000;"></div>
     </div>
     <div class="col-md-3">
         <select name="categoryId" class="form-select">
@@ -59,11 +60,10 @@
                             {
                                 <span class="badge bg-light text-dark mb-2">@product.SubcategoryName</span>
                             }
-                            <h6 class="card-title">@product.Name</h6>
+                            <h6 class="card-title">
+                                <a asp-action="Product" asp-route-id="@product.Id" class="text-decoration-none">@product.Name</a>
+                            </h6>
                             <p class="card-text fw-bold text-primary fs-5">@product.Price.ToString("F2") RON</p>
-                            <p class="card-text text-muted small">
-                                Stoc: @product.StockQuantity buc &nbsp;|&nbsp; Scor: @score.ToString("F3")
-                            </p>
                         </div>
                         <div class="card-footer bg-transparent">
                             @if (product.StockQuantity > 0)
@@ -87,9 +87,8 @@
         </div>
     }
 }
-else
-{
-    <div class="text-center text-muted py-5">
-        <p class="fs-5">Introduceți un termen de căutare pentru a găsi componente.</p>
-    </div>
+
+@section Scripts {
+    <script src="~/js/shop-search.js" asp-append-version="true"></script>
 }
+

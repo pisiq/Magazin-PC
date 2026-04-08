@@ -63,7 +63,7 @@
 
     <div class="col-lg-5">
         <div class="card shadow-sm">
-            <div class="card-header"><strong>Produse similare (TF-IDF + cosine)</strong></div>
+            <div class="card-header"><strong>Produse similare</strong></div>
             <div class="list-group list-group-flush">
                 @if (!Model.SimilarProducts.Any())
                 {
@@ -81,7 +81,6 @@
                                 </div>
                                 <div class="text-end">
                                     <div class="fw-bold text-primary">@product.Price.ToString("F2") RON</div>
-                                    <small class="text-muted">Scor: @score.ToString("F3")</small>
                                 </div>
                             </div>
                         </a>

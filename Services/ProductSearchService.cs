@@ -16,15 +16,6 @@ public interface IProductSearchService
         string query,
         int maxResults = 20,
         int? categoryId = null);
-
-    /// <summary>
-    /// Predictive title search for autocomplete.
-    /// Uses a hybrid score: prefix + trigram similarity + Levenshtein similarity.
-    /// </summary>
-    Task<IReadOnlyList<AutocompleteSuggestionDto>> GetAutocompleteAsync(
-        string query,
-        int maxResults = 8,
-        int? categoryId = null);
 }
 
 public class ProductSearchService(AppDbContext db, ILogger<ProductSearchService> logger)
@@ -108,56 +99,6 @@ public class ProductSearchService(AppDbContext db, ILogger<ProductSearchService>
         return scored.Select(x => (MapToDto(x.Product), x.Score)).ToList();
     }
 
-    public async Task<IReadOnlyList<AutocompleteSuggestionDto>> GetAutocompleteAsync(
-        string query,
-        int maxResults = 8,
-        int? categoryId = null)
-    {
-        if (string.IsNullOrWhiteSpace(query))
-            return [];
-
-        maxResults = Math.Clamp(maxResults, 1, 20);
-        var normalizedQuery = query.Trim().ToLowerInvariant();
-        if (normalizedQuery.Length < 2)
-            return [];
-
-        IQueryable<Product> q = db.Products
-            .Include(p => p.Category)
-            .Include(p => p.Subcategory)
-            .AsNoTracking()
-            .Where(p => p.StockQuantity > 0);
-
-        if (categoryId.HasValue)
-            q = q.Where(p => p.CategoryId == categoryId.Value);
-
-        var products = await q.ToListAsync();
-        if (products.Count == 0)
-            return [];
-
-        var scored = products
-            .Select(p =>
-            {
-                var name = p.Name.ToLowerInvariant();
-                var score = ComputeAutocompleteScore(normalizedQuery, name);
-                return (Product: p, Score: score);
-            })
-            .Where(x => x.Score >= 0.15)
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.Product.Name)
-            .Take(maxResults)
-            .Select(x => new AutocompleteSuggestionDto(
-                x.Product.Id,
-                x.Product.Name,
-                x.Product.Category.Name,
-                x.Product.Subcategory?.Name,
-                Math.Round(x.Score, 4)))
-            .ToList();
-
-        logger.LogDebug("Autocomplete for '{Query}' returned {Count} suggestions", query, scored.Count);
-
-        return scored;
-    }
-
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -207,97 +148,4 @@ public class ProductSearchService(AppDbContext db, ILogger<ProductSearchService>
         p.Category.Name,
         p.Subcategory?.Name
     );
-
-    private static double ComputeAutocompleteScore(string query, string productName)
-    {
-        double prefixScore = 0;
-        if (productName.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-        {
-            prefixScore = 1;
-        }
-        else
-        {
-            var tokens = Tokenize(productName);
-            if (tokens.Any(t => t.StartsWith(query, StringComparison.OrdinalIgnoreCase)))
-                prefixScore = 0.75;
-        }
-
-        var trigramScore = TrigramJaccard(query, productName);
-        var levenshteinScore = BestLevenshteinSimilarity(query, productName);
-
-        return prefixScore * 0.55 + trigramScore * 0.30 + levenshteinScore * 0.15;
-    }
-
-    private static double TrigramJaccard(string a, string b)
-    {
-        var aSet = BuildTrigrams(a);
-        var bSet = BuildTrigrams(b);
-        if (aSet.Count == 0 || bSet.Count == 0)
-            return 0;
-
-        var intersection = aSet.Intersect(bSet).Count();
-        var union = aSet.Count + bSet.Count - intersection;
-        return union == 0 ? 0 : (double)intersection / union;
-    }
-
-    private static HashSet<string> BuildTrigrams(string value)
-    {
-        var normalized = $"  {value.ToLowerInvariant()}  ";
-        var result = new HashSet<string>(StringComparer.Ordinal);
-
-        if (normalized.Length < 3)
-        {
-            result.Add(normalized);
-            return result;
-        }
-
-        for (var i = 0; i <= normalized.Length - 3; i++)
-            result.Add(normalized.Substring(i, 3));
-
-        return result;
-    }
-
-    private static double BestLevenshteinSimilarity(string query, string productName)
-    {
-        var candidates = Tokenize(productName).Append(productName);
-        var best = 0.0;
-
-        foreach (var candidate in candidates)
-        {
-            var dist = LevenshteinDistance(query, candidate);
-            var maxLen = Math.Max(query.Length, candidate.Length);
-            if (maxLen == 0) continue;
-
-            var sim = 1.0 - (double)dist / maxLen;
-            if (sim > best) best = sim;
-        }
-
-        return best;
-    }
-
-    private static int LevenshteinDistance(string source, string target)
-    {
-        if (source.Length == 0) return target.Length;
-        if (target.Length == 0) return source.Length;
-
-        var rows = source.Length + 1;
-        var cols = target.Length + 1;
-        var dp = new int[rows, cols];
-
-        for (var i = 0; i < rows; i++) dp[i, 0] = i;
-        for (var j = 0; j < cols; j++) dp[0, j] = j;
-
-        for (var i = 1; i < rows; i++)
-        {
-            for (var j = 1; j < cols; j++)
-            {
-                var cost = source[i - 1] == target[j - 1] ? 0 : 1;
-                dp[i, j] = Math.Min(
-                    Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
-                    dp[i - 1, j - 1] + cost);
-            }
-        }
-
-        return dp[rows - 1, cols - 1];
-    }
 }

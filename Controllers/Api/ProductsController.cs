@@ -11,7 +11,6 @@ namespace Recomandare_PC.Controllers.Api;
 public class ProductsController(
     AppDbContext db,
     IProductSearchService searchService,
-    ISimilarProductsService similarProductsService,
     IPdfExtractionService pdfService) : ControllerBase
 {
     // GET api/products
@@ -125,32 +124,6 @@ public class ProductsController(
             return BadRequest("Query parameter 'q' is required.");
 
         var results = await searchService.SearchAsync(q, top, categoryId);
-        return Ok(results.Select(r => new { r.Product, r.Score }));
-    }
-
-    // GET api/products/autocomplete?q=rtx
-    [HttpGet("autocomplete")]
-    public async Task<IActionResult> Autocomplete(
-        [FromQuery] string q,
-        [FromQuery] int? categoryId,
-        [FromQuery] int top = 8)
-    {
-        if (string.IsNullOrWhiteSpace(q))
-            return Ok(Array.Empty<AutocompleteSuggestionDto>());
-
-        var results = await searchService.GetAutocompleteAsync(q, top, categoryId);
-        return Ok(results);
-    }
-
-    // GET api/products/{id}/similar?top=6
-    [HttpGet("{id:int}/similar")]
-    public async Task<IActionResult> Similar(int id, [FromQuery] int top = 6)
-    {
-        var exists = await db.Products.AsNoTracking().AnyAsync(p => p.Id == id);
-        if (!exists)
-            return NotFound();
-
-        var results = await similarProductsService.GetSimilarProductsAsync(id, top);
         return Ok(results.Select(r => new { r.Product, r.Score }));
     }
 }

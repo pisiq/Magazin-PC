@@ -1,0 +1,87 @@
+﻿@model Recomandare_PC.Models.SpecificationSearchViewModel
+@{
+    ViewData["Title"] = "Căutare avansată în specificații";
+}
+
+<h2 class="mb-4">Căutare avansată în documentele de specificații</h2>
+
+<form method="get" asp-action="SpecificationSearch" class="row g-2 mb-4" autocomplete="off">
+    <div class="col-md-5">
+        <input type="text"
+               name="q"
+               value="@Model.Query"
+               class="form-control"
+               placeholder="ex: PCIe 5.0, 16GB GDDR6X, 80 Plus Gold" />
+    </div>
+    <div class="col-md-3">
+        <select name="categoryId" class="form-select">
+            <option value="">Toate categoriile</option>
+            @foreach (var cat in Model.Categories)
+            {
+                <option value="@cat.Id" selected="@(Model.CategoryId == cat.Id ? "selected" : null)">
+                    @cat.Name
+                </option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <select name="scoreSort" class="form-select">
+            <option value="desc" selected="@(Model.ScoreSort == "desc" ? "selected" : null)">Scor desc</option>
+            <option value="asc" selected="@(Model.ScoreSort == "asc" ? "selected" : null)">Scor asc</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100">Caută</button>
+    </div>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.Query))
+{
+    if (!Model.Results.Any())
+    {
+        <div class="alert alert-warning">Nu s-au găsit documente de specificații pentru "<strong>@Model.Query</strong>".</div>
+    }
+    else
+    {
+        <p class="text-muted">
+            @Model.Results.Count rezultat(e) pentru "<strong>@Model.Query</strong>" (sortare scor: @Model.ScoreSort)
+        </p>
+
+        <div class="table-responsive">
+            <table class="table table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Produs</th>
+                        <th>Categorie</th>
+                        <th class="text-end">Preț</th>
+                        <th class="text-end">Stoc</th>
+                        <th class="text-end">Scor Lucene</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var (product, score) in Model.Results)
+                {
+                    <tr>
+                        <td>
+                            <a asp-action="Product" asp-route-id="@product.Id" class="text-decoration-none">
+                                @product.Name
+                            </a>
+                        </td>
+                        <td>
+                            @product.CategoryName
+                            @if (!string.IsNullOrWhiteSpace(product.SubcategoryName))
+                            {
+                                <span class="text-muted">/ @product.SubcategoryName</span>
+                            }
+                        </td>
+                        <td class="text-end">@product.Price.ToString("F2") RON</td>
+                        <td class="text-end">@product.StockQuantity</td>
+                        <td class="text-end"><code>@score.ToString("F4")</code></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+

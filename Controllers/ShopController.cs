@@ -11,6 +11,7 @@ namespace Recomandare_PC.Controllers;
 public class ShopController(
     AppDbContext db,
     IProductSearchService productSearchService,
+    ILuceneSearchService luceneSearchService,
     ISimilarProductsService similarProductsService,
     ILlmRecommendationService llmRecommendationService,
     ILogger<ShopController> logger) : Controller
@@ -44,6 +45,44 @@ public class ShopController(
         ViewBag.CartCount  = GetCart().Count;
 
         return View(results);
+    }
+
+    // GET /Shop/SpecificationSearch
+    public async Task<IActionResult> SpecificationSearch(
+        string? q,
+        int? categoryId,
+        string scoreSort = "desc",
+        int top = 50)
+    {
+        var normalizedSort = string.Equals(scoreSort, "asc", StringComparison.OrdinalIgnoreCase)
+            ? "asc"
+            : "desc";
+
+        top = Math.Clamp(top, 1, 200);
+
+        IReadOnlyList<(ProductListDto Product, float Score)> results = [];
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            await luceneSearchService.EnsureIndexAsync();
+            var rawResults = luceneSearchService.Search(q, top, categoryId);
+
+            results = normalizedSort == "asc"
+                ? rawResults.OrderBy(r => r.Score).ToList()
+                : rawResults.OrderByDescending(r => r.Score).ToList();
+        }
+
+        var model = new SpecificationSearchViewModel
+        {
+            Query = q?.Trim() ?? string.Empty,
+            CategoryId = categoryId,
+            ScoreSort = normalizedSort,
+            Categories = await db.Categories.AsNoTracking().OrderBy(c => c.Name).ToListAsync(),
+            Results = results
+        };
+
+        ViewBag.CartCount = GetCart().Count;
+        return View(model);
     }
 
     // GET /Shop/Product/{id}

@@ -18,6 +18,12 @@ public class CreateModel(
     [BindProperty]
     public Product Product { get; set; } = new();
 
+    [BindProperty]
+    public bool PdfAnalysisCompleted { get; set; }
+
+    [BindProperty]
+    public bool ConfirmAutoExtractedData { get; set; }
+
     public SelectList CategoryOptions { get; set; } = null!;
     public string SubcategoryJson { get; set; } = "[]";
 
@@ -26,25 +32,63 @@ public class CreateModel(
         await PopulateSelectsAsync();
     }
 
-    public async Task<IActionResult> OnPostAsync(IFormFile? PdfFile)
+    public async Task<IActionResult> OnPostAsync(IFormFile? pdfFile)
     {
         await PopulateSelectsAsync();
 
-        if (!ModelState.IsValid) return Page();
+        if (pdfFile is { Length: > 0 })
+        {
+            if (!PdfAnalysisCompleted)
+                ModelState.AddModelError(string.Empty, "Mai întâi analizează PDF-ul pentru a completa automat datele produsului.");
 
-        if (PdfFile is { Length: > 0 })
+            if (!ConfirmAutoExtractedData)
+                ModelState.AddModelError(string.Empty, "Confirmă datele extrase automat din PDF înainte de salvare.");
+        }
+
+        if (!ModelState.IsValid)
+            return Page();
+
+        if (pdfFile is { Length: > 0 })
         {
             var pdfDir = Path.Combine(env.WebRootPath, "pdfs");
             Directory.CreateDirectory(pdfDir);
 
-            var fileName = $"{Guid.NewGuid()}{Path.GetExtension(PdfFile.FileName)}";
+            var fileName = $"{Guid.NewGuid()}{Path.GetExtension(pdfFile.FileName)}";
             var absolutePath = Path.Combine(pdfDir, fileName);
 
             await using (var fs = System.IO.File.Create(absolutePath))
-                await PdfFile.CopyToAsync(fs);
+                await pdfFile.CopyToAsync(fs);
 
             Product.PdfPath = $"pdfs/{fileName}";
-            Product.Specifications = await pdfService.ExtractSpecificationsAsync(absolutePath);
+            var analysis = await pdfService.AnalyzePdfAsync(absolutePath);
+            Product.Specifications = analysis.Specifications;
+
+            if (string.IsNullOrWhiteSpace(Product.Name) && !string.IsNullOrWhiteSpace(analysis.SuggestedProductName))
+                Product.Name = analysis.SuggestedProductName;
+
+            if (Product.CategoryId == default && !string.IsNullOrWhiteSpace(analysis.SuggestedCategoryName))
+            {
+                var detectedCategory = await db.Categories
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Name == analysis.SuggestedCategoryName);
+
+                if (detectedCategory is not null)
+                {
+                    Product.CategoryId = detectedCategory.Id;
+
+                    if (Product.SubcategoryId is null && !string.IsNullOrWhiteSpace(analysis.SuggestedSubcategoryName))
+                    {
+                        var detectedSubcategory = await db.Subcategories
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(s =>
+                                s.CategoryId == detectedCategory.Id &&
+                                s.Name == analysis.SuggestedSubcategoryName);
+
+                        if (detectedSubcategory is not null)
+                            Product.SubcategoryId = detectedSubcategory.Id;
+                    }
+                }
+            }
         }
 
         db.Products.Add(Product);

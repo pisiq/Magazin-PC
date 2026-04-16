@@ -52,9 +52,23 @@ var app = builder.Build();
 // ── Auto-migrate & seed on startup ───────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
+    var startupLogger = scope.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Startup");
+
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
     await DataSeeder.SeedProductsAsync(db);
+
+    try
+    {
+        var lucene = scope.ServiceProvider.GetRequiredService<ILuceneSearchService>();
+        await lucene.EnsureIndexAsync();
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogWarning(ex, "Lucene index build at startup failed. It will be retried on first search.");
+    }
 }
 
 

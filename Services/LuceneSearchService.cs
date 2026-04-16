@@ -6,10 +6,12 @@ using Lucene.Net.Search;
 using Lucene.Net.Search.Similarities;
 using Lucene.Net.Store;
 using Lucene.Net.Util;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Recomandare_PC.Data;
 using Recomandare_PC.DTOs;
-using System.Text.Json;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
 
 namespace Recomandare_PC.Services;
 
@@ -24,15 +26,20 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<LuceneSearchService> _logger;
+    private readonly IWebHostEnvironment _environment;
 
     private const LuceneVersion LuceneVer = LuceneVersion.LUCENE_48;
     private readonly RAMDirectory _directory = new();
     private volatile bool _indexed = false;
     private readonly SemaphoreSlim _buildLock = new(1, 1);
 
-    public LuceneSearchService(IServiceScopeFactory scopeFactory, ILogger<LuceneSearchService> logger)
+    public LuceneSearchService(
+        IServiceScopeFactory scopeFactory,
+        IWebHostEnvironment environment,
+        ILogger<LuceneSearchService> logger)
     {
         _scopeFactory = scopeFactory;
+        _environment = environment;
         _logger = logger;
     }
 
@@ -81,27 +88,40 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
         };
 
         using var writer = new IndexWriter(_directory, config);
+        var pdfMissingCount = 0;
+        var pdfErrorCount = 0;
 
         foreach (var p in products)
         {
-            var specsText = ExtractSpecsText(p.Specifications);
+            var pdfRead = ExtractPdfText(p.PdfPath);
+            if (pdfRead.State == PdfTextState.Missing)
+                pdfMissingCount++;
+            else if (pdfRead.State == PdfTextState.Error)
+                pdfErrorCount++;
+
+            var searchableContent = $"{p.Name} {pdfRead.Text}";
 
             var doc = new Document();
             doc.Add(new StringField("id",         p.Id.ToString(),             Field.Store.YES));
             doc.Add(new StringField("categoryId", p.CategoryId.ToString(),     Field.Store.YES));
             doc.Add(new TextField  ("name",        p.Name,                     Field.Store.YES));
-            doc.Add(new TextField  ("specs",       specsText,                  Field.Store.NO));
-            doc.Add(new TextField  ("content",     $"{p.Name} {specsText}",    Field.Store.NO));
+            doc.Add(new TextField  ("pdf_full",    pdfRead.Text,               Field.Store.NO));
+            doc.Add(new TextField  ("content",     searchableContent,          Field.Store.NO));
             doc.Add(new StoredField("price",       p.Price.ToString("F2")));
             doc.Add(new StoredField("stock",       p.StockQuantity.ToString()));
             doc.Add(new StoredField("categoryName",p.Category.Name));
             doc.Add(new StoredField("subcategoryName", p.Subcategory?.Name ?? ""));
+            doc.Add(new StoredField("pdfPath", p.PdfPath ?? ""));
             writer.AddDocument(doc);
         }
 
         writer.Commit();
         _indexed = true;
-        _logger.LogInformation("Lucene index built with {Count} products", products.Count);
+        _logger.LogInformation(
+            "Lucene index built with {Count} products. Missing PDFs: {MissingCount}. PDF read errors: {ErrorCount}.",
+            products.Count,
+            pdfMissingCount,
+            pdfErrorCount);
     }
 
     public IReadOnlyList<(ProductListDto Product, float Score)> Search(
@@ -121,7 +141,15 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
             using var reader  = DirectoryReader.Open(_directory);
             var searcher = new IndexSearcher(reader) { Similarity = new BM25Similarity() };
 
-            var parser = new MultiFieldQueryParser(LuceneVer, ["name", "specs", "content"], analyzer)
+            var parser = new MultiFieldQueryParser(
+                LuceneVer,
+                ["name", "pdf_full"],
+                analyzer,
+                new Dictionary<string, float>
+                {
+                    ["name"] = 2.0f,
+                    ["pdf_full"] = 1.5f
+                })
             {
                 DefaultOperator = QueryParserBase.OR_OPERATOR
             };
@@ -133,7 +161,7 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
             }
             catch
             {
-                luceneQuery = new TermQuery(new Term("content", query.ToLowerInvariant()));
+                luceneQuery = new TermQuery(new Term("pdf_full", query.ToLowerInvariant()));
             }
 
             if (categoryId.HasValue)
@@ -146,6 +174,13 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
 
             var hits    = searcher.Search(luceneQuery, maxResults);
             var results = new List<(ProductListDto, float)>(hits.ScoreDocs.Length);
+
+            _logger.LogInformation(
+                "Lucene spec search query='{Query}', categoryId={CategoryId}, maxResults={MaxResults}, hits={HitCount}",
+                query,
+                categoryId,
+                maxResults,
+                hits.TotalHits);
 
             foreach (var hit in hits.ScoreDocs)
             {
@@ -170,19 +205,44 @@ public sealed class LuceneSearchService : ILuceneSearchService, IDisposable
         }
     }
 
-    private static string ExtractSpecsText(string? specsJson)
+    private PdfTextReadResult ExtractPdfText(string? pdfPath)
     {
-        if (string.IsNullOrWhiteSpace(specsJson)) return "";
+        var absolutePdfPath = ResolvePdfPath(pdfPath);
+        if (absolutePdfPath is null || !File.Exists(absolutePdfPath))
+            return new PdfTextReadResult(string.Empty, PdfTextState.Missing);
+
         try
         {
-            var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(specsJson);
-            return dict is null ? specsJson : string.Join(" ", dict.Values);
+            using var document = PdfDocument.Open(absolutePdfPath);
+            var words = new List<string>(1024);
+
+            foreach (Page page in document.GetPages())
+            {
+                foreach (var word in page.GetWords())
+                    words.Add(word.Text);
+            }
+
+            return new PdfTextReadResult(string.Join(' ', words), PdfTextState.Ok);
         }
-        catch
+        catch (Exception ex)
         {
-            return specsJson;
+            _logger.LogWarning(ex, "Skipping PDF text extraction for {PdfPath}", pdfPath);
+            return new PdfTextReadResult(string.Empty, PdfTextState.Error);
         }
     }
+
+    private string? ResolvePdfPath(string? pdfPath)
+    {
+        if (string.IsNullOrWhiteSpace(pdfPath))
+            return null;
+
+        var relativePath = pdfPath.TrimStart('~', '/', '\\').Replace('/', Path.DirectorySeparatorChar);
+        return Path.Combine(_environment.WebRootPath, relativePath);
+    }
+
+    private enum PdfTextState { Ok, Missing, Error }
+
+    private readonly record struct PdfTextReadResult(string Text, PdfTextState State);
 
     public void Dispose() => _directory.Dispose();
 }

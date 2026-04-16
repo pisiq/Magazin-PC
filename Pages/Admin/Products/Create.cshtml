@@ -7,6 +7,10 @@
 <h2>Produs nou</h2>
 
 <form method="post" enctype="multipart/form-data">
+    <div asp-validation-summary="All" class="text-danger mb-3"></div>
+    <input type="hidden" asp-for="Product.Specifications" id="specificationsField" />
+    <input type="hidden" asp-for="PdfAnalysisCompleted" id="pdfAnalysisCompleted" />
+
     <div class="row">
         <div class="col-md-6">
             <div class="mb-3">
@@ -44,8 +48,21 @@
                 <label for="PdfFile" class="form-label">Fișier PDF (opțional)</label>
                 <input type="file" name="PdfFile" id="PdfFile" accept=".pdf" class="form-control" />
                 <div id="pdfStatus" class="form-text text-muted">
-                    Specificațiile și categoria vor fi detectate automat din PDF.
+                    Numele, categoria și specificațiile vor fi detectate automat din PDF.
                 </div>
+            </div>
+
+            <div class="mb-3 form-check">
+                <input asp-for="ConfirmAutoExtractedData" class="form-check-input" id="confirmAutoExtractedData" />
+                <label asp-for="ConfirmAutoExtractedData" class="form-check-label">
+                    Confirm că datele extrase automat din PDF sunt corecte.
+                </label>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Preview specificații extrase</label>
+                <textarea id="specPreview" class="form-control" rows="6" readonly
+                          placeholder="După analiză vei vedea aici specificațiile detectate."></textarea>
             </div>
         </div>
     </div>
@@ -61,15 +78,20 @@ const categorySelect = document.getElementById('categorySelect');
 const subcategorySelect = document.getElementById('subcategorySelect');
 const pdfInput = document.getElementById('PdfFile');
 const pdfStatus = document.getElementById('pdfStatus');
+const nameInput = document.getElementById('Product_Name');
+const specsField = document.getElementById('specificationsField');
+const specsPreview = document.getElementById('specPreview');
+const analysisCompletedInput = document.getElementById('pdfAnalysisCompleted');
+const confirmCheckbox = document.getElementById('confirmAutoExtractedData');
 
 function filterSubcategories(categoryId, selectedSubId) {
-    const filtered = allSubs.filter(s => !categoryId || s.categoryId == categoryId);
+    const filtered = allSubs.filter(s => !categoryId || String(s.categoryId) === String(categoryId));
     subcategorySelect.innerHTML = '<option value="">-- Niciuna --</option>';
     filtered.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s.id;
         opt.textContent = s.name;
-        if (selectedSubId && s.id == selectedSubId) opt.selected = true;
+        if (selectedSubId && String(s.id) === String(selectedSubId)) opt.selected = true;
         subcategorySelect.appendChild(opt);
     });
 }
@@ -79,9 +101,27 @@ categorySelect.addEventListener('change', () => filterSubcategories(categorySele
 // Initial render
 filterSubcategories(categorySelect.value, null);
 
+function resetAnalysisState() {
+    analysisCompletedInput.value = 'false';
+    confirmCheckbox.checked = false;
+}
+
+categorySelect.addEventListener('change', resetAnalysisState);
+if (nameInput) {
+    nameInput.addEventListener('input', resetAnalysisState);
+}
+
 // PDF analysis
 pdfInput.addEventListener('change', async () => {
-    if (!pdfInput.files?.length) return;
+    resetAnalysisState();
+    specsField.value = '';
+    specsPreview.value = '';
+
+    if (!pdfInput.files?.length) {
+        pdfStatus.textContent = 'Selectează un PDF pentru completare automată.';
+        pdfStatus.className = 'form-text text-muted';
+        return;
+    }
 
     pdfStatus.textContent = 'Se analizează PDF-ul...';
     pdfStatus.className = 'form-text text-info';
@@ -91,19 +131,40 @@ pdfInput.addEventListener('change', async () => {
 
     try {
         const resp = await fetch('/api/products/analyze-pdf', { method: 'POST', body: formData });
-        if (!resp.ok) { pdfStatus.textContent = 'Eroare la analiza PDF.'; pdfStatus.className = 'form-text text-danger'; return; }
+        if (!resp.ok) {
+            pdfStatus.textContent = 'Eroare la analiza PDF.';
+            pdfStatus.className = 'form-text text-danger';
+            return;
+        }
 
         const data = await resp.json();
 
-        if (data.categoryId) {
-            categorySelect.value = data.categoryId;
-            filterSubcategories(data.categoryId, data.subcategoryId);
+        if (data.suggestedProductName && nameInput && !nameInput.value.trim()) {
+            nameInput.value = data.suggestedProductName;
         }
 
+         if (data.categoryId) {
+             categorySelect.value = data.categoryId;
+             filterSubcategories(data.categoryId, data.subcategoryId);
+         }
+
+        if (data.specs) {
+            specsField.value = data.specs;
+            try {
+                const parsed = JSON.parse(data.specs);
+                specsPreview.value = JSON.stringify(parsed, null, 2);
+            } catch {
+                specsPreview.value = data.specs;
+            }
+        }
+
+        analysisCompletedInput.value = 'true';
+
         const detected = [data.suggestedCategoryName, data.suggestedSubcategoryName].filter(Boolean).join(' / ');
+        const nameInfo = data.suggestedProductName ? `Nume detectat: ${data.suggestedProductName}. ` : '';
         pdfStatus.textContent = detected
-            ? `Detectat: ${detected} — câmpurile au fost completate automat.`
-            : 'PDF analizat — categorie nedetectată, selectați manual.';
+            ? `${nameInfo}Detectat: ${detected} — verifică datele și bifează confirmarea.`
+            : `${nameInfo}PDF analizat — categorie nedetectată, selectează manual și confirmă.`;
         pdfStatus.className = 'form-text ' + (detected ? 'text-success' : 'text-warning');
     } catch {
         pdfStatus.textContent = 'Eroare la analiza PDF.';

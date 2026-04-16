@@ -101,6 +101,7 @@ public class ProductsController(
             return Ok(new
             {
                 specs = result.Specifications,
+                suggestedProductName = result.SuggestedProductName,
                 categoryId,
                 subcategoryId,
                 suggestedCategoryName = result.SuggestedCategoryName,

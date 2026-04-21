@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Net;
+using Microsoft.AspNetCore.Mvc;
 using Recomandare_PC.DTOs;
 using Recomandare_PC.Services;
 
@@ -23,13 +24,49 @@ public class BuildAssistantController(
             request.DeviceId,
             request.Components?.Count ?? 0);
 
-        var response = await recommendationService.RecommendAsync(request.ToRecommendationRequest());
+        try
+        {
+            var response = await recommendationService.RecommendAsync(request.ToRecommendationRequest());
 
-        logger.LogDebug(
-            "API build-assistant response ready. Recommendations={RecommendationCount}",
-            response.Recommendations.Count);
+            logger.LogDebug(
+                "API build-assistant response ready. Recommendations={RecommendationCount}",
+                response.Recommendations.Count);
 
-        return Ok(response);
+            return Ok(Success(response));
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            logger.LogWarning(ex, "BuildAssistant API hit upstream rate limit.");
+            return StatusCode((int)HttpStatusCode.TooManyRequests,
+                Failure("RATE_LIMIT", "Too many requests to AI provider. Please retry in 20-60 seconds."));
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "BuildAssistant API upstream call failed.");
+            return StatusCode((int)HttpStatusCode.ServiceUnavailable,
+                Failure("UPSTREAM_UNAVAILABLE", "AI service is temporarily unavailable. Please try again shortly."));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "BuildAssistant API unexpected error.");
+            return StatusCode((int)HttpStatusCode.InternalServerError,
+                Failure("INTERNAL_ERROR", "Unexpected server error while generating recommendations."));
+        }
     }
-}
 
+    private object Success(RecommendationResponse response) => new
+    {
+        success = true,
+        traceId = HttpContext.TraceIdentifier,
+        data = response,
+        error = (object?)null
+    };
+
+    private object Failure(string code, string message) => new
+    {
+        success = false,
+        traceId = HttpContext.TraceIdentifier,
+        data = (object?)null,
+        error = new { code, message }
+    };
+}

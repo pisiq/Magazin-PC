@@ -41,6 +41,7 @@
                     }
                 </td>
                 <td>
+                    <a asp-controller="Shop" asp-action="Product" asp-route-id="@p.Id" class="btn btn-sm btn-outline-primary" target="_blank">Vezi pagina produs</a>
                     <a asp-page="Edit" asp-route-id="@p.Id" class="btn btn-sm btn-warning">Editează</a>
                     <a asp-page="Delete" asp-route-id="@p.Id" class="btn btn-sm btn-danger">Șterge</a>
                 </td>

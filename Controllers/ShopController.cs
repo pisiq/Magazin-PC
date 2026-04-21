@@ -5,6 +5,7 @@ using Recomandare_PC.DTOs;
 using Recomandare_PC.Models;
 using Recomandare_PC.Services;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Recomandare_PC.Controllers;
 
@@ -209,11 +210,67 @@ public class ShopController(
             if (dict is null || dict.Count == 0)
                 return [];
 
-            return dict.ToList();
+            var visibleSpecs = dict
+                .Where(kv => !string.Equals(kv.Key, "raw_text", StringComparison.OrdinalIgnoreCase)
+                          && !string.Equals(kv.Key, "error", StringComparison.OrdinalIgnoreCase)
+                          && !string.IsNullOrWhiteSpace(kv.Value))
+                .Select(kv => new KeyValuePair<string, string>(HumanizeSpecKey(kv.Key), kv.Value.Trim()))
+                .ToList();
+
+            if (visibleSpecs.Count > 0)
+                return visibleSpecs;
+
+            if (dict.TryGetValue("raw_text", out var rawText) && !string.IsNullOrWhiteSpace(rawText))
+            {
+                var recovered = ParseRawTextSpecifications(rawText);
+                if (recovered.Count > 0)
+                    return recovered;
+            }
+
+            return [];
         }
         catch
         {
             return [new KeyValuePair<string, string>("Detalii", specificationsJson)];
         }
+    }
+
+    private static List<KeyValuePair<string, string>> ParseRawTextSpecifications(string rawText)
+    {
+        var flattened = Regex.Replace(rawText, @"\s+", " ").Trim();
+        if (flattened.Length == 0)
+            return [];
+
+        var matches = Regex.Matches(
+            flattened,
+            @"(?<key>[A-Za-z][A-Za-z0-9\/\-\+\.\(\) ]{1,40})\s*:\s*(?<value>.*?)(?=(?:\s+[A-Za-z][A-Za-z0-9\/\-\+\.\(\) ]{1,40}\s*:)|$)",
+            RegexOptions.Singleline);
+
+        var specs = new List<KeyValuePair<string, string>>();
+        foreach (Match match in matches)
+        {
+            var rawKey = match.Groups["key"].Value.Trim();
+            var rawValue = match.Groups["value"].Value.Trim();
+            if (rawKey.Length < 2 || rawValue.Length < 1)
+                continue;
+
+            if (rawKey.Equals("name", StringComparison.OrdinalIgnoreCase)
+                || rawKey.Equals("category", StringComparison.OrdinalIgnoreCase)
+                || rawKey.Equals("type", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            specs.Add(new KeyValuePair<string, string>(HumanizeSpecKey(rawKey), rawValue));
+        }
+
+        return specs;
+    }
+
+    private static string HumanizeSpecKey(string key)
+    {
+        var text = key.Replace('_', ' ').Trim();
+        if (text.Length == 0)
+            return key;
+
+        return char.ToUpperInvariant(text[0]) + text[1..];
     }
 }

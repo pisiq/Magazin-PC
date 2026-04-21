@@ -36,8 +36,8 @@ public class PdfExtractionService(ILogger<PdfExtractionService> logger) : IPdfEx
         try
         {
             var rawText = ExtractRawText(absolutePdfPath);
-            var specs = ParseSpecifications(rawText);
-            return Task.FromResult(JsonSerializer.Serialize(specs, new JsonSerializerOptions { WriteIndented = false }));
+            var parsed = ParseStructuredContent(rawText);
+            return Task.FromResult(JsonSerializer.Serialize(parsed.Specifications, new JsonSerializerOptions { WriteIndented = false }));
         }
         catch (Exception ex)
         {
@@ -54,13 +54,9 @@ public class PdfExtractionService(ILogger<PdfExtractionService> logger) : IPdfEx
         try
         {
             var rawText = ExtractRawText(absolutePdfPath);
-            var specs = ParseSpecifications(rawText);
-            RemoveNonSpecificationKeys(specs);
-            var normalizedText = NormalizeForMatching(rawText);
-            var suggestedName = DetectProductName(rawText);
-            var specsJson = JsonSerializer.Serialize(specs, new JsonSerializerOptions { WriteIndented = false });
-            var (cat, sub) = DetectCategorySubcategory(normalizedText);
-            return Task.FromResult(new PdfAnalysisResult(specsJson, suggestedName, cat, sub));
+            var parsed = ParseStructuredContent(rawText);
+            var specsJson = JsonSerializer.Serialize(parsed.Specifications, new JsonSerializerOptions { WriteIndented = false });
+            return Task.FromResult(new PdfAnalysisResult(specsJson, parsed.SuggestedProductName, parsed.SuggestedCategoryName, parsed.SuggestedSubcategoryName));
         }
         catch (Exception ex)
         {
@@ -89,28 +85,327 @@ public class PdfExtractionService(ILogger<PdfExtractionService> logger) : IPdfEx
         return sb.ToString().Trim();
     }
 
-    private static Dictionary<string, string> ParseSpecifications(string rawText)
+    private sealed record ParsedPdfContent(
+        Dictionary<string, string> Specifications,
+        string? SuggestedProductName,
+        string? SuggestedCategoryName,
+        string? SuggestedSubcategoryName);
+
+    private static ParsedPdfContent ParseStructuredContent(string rawText)
     {
         var specs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (keyCandidate, valueCandidate) in ExtractKeyValueCandidates(rawText))
+        string? suggestedName = null;
+        string? suggestedCategory = null;
+        string? suggestedSubcategory = null;
+        var normalizedText = NormalizeForMatching(rawText);
+
+        foreach (var (keyCandidate, valueCandidate) in ExtractOrderedKeyValuePairs(rawText))
         {
-            var normalizedKey = NormalizeSpecKey(keyCandidate);
-            if (normalizedKey is null)
+            var key = CleanLine(keyCandidate);
+            var value = NormalizeSpecValue(valueCandidate);
+            if (value.Length < 1)
                 continue;
 
-            var normalizedValue = NormalizeSpecValue(valueCandidate);
-            if (normalizedValue.Length < 2)
+            var normalizedKey = NormalizeForMatching(key);
+
+            if (IsNameKey(normalizedKey))
+            {
+                suggestedName ??= value;
+                continue;
+            }
+
+            if (IsCategoryKey(normalizedKey))
+            {
+                suggestedCategory ??= CanonicalizeCategoryName(value) ?? value;
+                continue;
+            }
+
+            if (IsTypeKey(normalizedKey))
+            {
+                suggestedSubcategory ??= CanonicalizeSubcategoryName(value) ?? value;
+                continue;
+            }
+
+            var specKey = NormalizeSpecKey(key);
+            if (specKey is null)
                 continue;
 
-            specs[normalizedKey] = normalizedValue;
+            if (value.Length < 2)
+                continue;
+
+            specs[specKey] = value;
         }
 
-        FillRegexBasedMissingSpecs(rawText, specs);
+        if (string.IsNullOrWhiteSpace(suggestedCategory))
+        {
+            var (detectedCategory, detectedSubcategory) = DetectCategorySubcategory(normalizedText);
+            suggestedCategory = detectedCategory;
+            suggestedSubcategory ??= detectedSubcategory;
+        }
+        else
+        {
+            suggestedCategory = CanonicalizeCategoryName(suggestedCategory) ?? suggestedCategory;
+            suggestedSubcategory = CanonicalizeSubcategoryForCategory(suggestedSubcategory, suggestedCategory);
+        }
 
         if (specs.Count == 0)
             specs["raw_text"] = rawText.Length > 8000 ? rawText[..8000] : rawText;
 
-        return specs;
+        return new ParsedPdfContent(specs, suggestedName, suggestedCategory, suggestedSubcategory);
+    }
+
+    private static IEnumerable<(string Key, string Value)> ExtractOrderedKeyValuePairs(string rawText)
+    {
+        var extracted = new List<(string Key, string Value)>();
+
+        var lines = rawText
+            .Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(CleanLine)
+            .Where(l => l.Length > 2);
+
+        foreach (var line in lines)
+        {
+            if (TryExtractPair(line, out var key, out var value))
+                extracted.Add((key, value));
+        }
+
+        if (extracted.Count >= 2)
+            return extracted;
+
+        var labeledPairs = ExtractKnownLabeledPairs(rawText);
+        if (labeledPairs.Count >= 2)
+            return labeledPairs;
+
+        return ExtractFlattenedPairsWithBacktracking(rawText);
+    }
+
+    private static readonly string[] KnownLabels =
+    [
+        "Name",
+        "Product Name",
+        "Model",
+        "Category",
+        "Type",
+        "Socket",
+        "RAM Support",
+        "RAM",
+        "PCIe",
+        "Form Factor",
+        "Cores",
+        "Threads",
+        "Base Clock",
+        "Boost Clock",
+        "Cache",
+        "TDP",
+        "VRAM",
+        "Power",
+        "Interface",
+        "Chipset",
+        "Capacity",
+        "Speed",
+        "Latency",
+        "Wattage"
+    ];
+
+    private static List<(string Key, string Value)> ExtractKnownLabeledPairs(string rawText)
+    {
+        var flattened = Regex.Replace(rawText, @"\s+", " ").Trim();
+        if (flattened.Length == 0)
+            return [];
+
+        var escapedLabels = KnownLabels
+            .OrderByDescending(l => l.Length)
+            .Select(Regex.Escape);
+
+        var pattern = $@"(?<key>{string.Join("|", escapedLabels)})\s*:\s*";
+        var matches = Regex.Matches(flattened, pattern, RegexOptions.IgnoreCase);
+        if (matches.Count == 0)
+            return [];
+
+        var pairs = new List<(string Key, string Value)>();
+        for (var i = 0; i < matches.Count; i++)
+        {
+            var current = matches[i];
+            var key = CleanLine(current.Groups["key"].Value);
+
+            var valueStart = current.Index + current.Length;
+            var valueEnd = i + 1 < matches.Count ? matches[i + 1].Index : flattened.Length;
+            if (valueStart >= valueEnd)
+                continue;
+
+            var value = CleanLine(flattened[valueStart..valueEnd]);
+            if (key.Length is < 2 or > 80 || value.Length < 1)
+                continue;
+
+            pairs.Add((key, value));
+        }
+
+        return pairs;
+    }
+
+    private static List<(string Key, string Value)> ExtractFlattenedPairsWithBacktracking(string rawText)
+    {
+        var pairs = new List<(string Key, string Value)>();
+        var flattened = Regex.Replace(rawText, @"\s+", " ").Trim();
+        if (flattened.Length == 0)
+            return pairs;
+
+        var tokens = flattened.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var keyTokenIndexes = new List<int>();
+
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (IsKeyMarkerToken(tokens[i]))
+                keyTokenIndexes.Add(i);
+        }
+
+        if (keyTokenIndexes.Count == 0)
+            return pairs;
+
+        for (var markerPos = 0; markerPos < keyTokenIndexes.Count; markerPos++)
+        {
+            var keyEndIndex = keyTokenIndexes[markerPos];
+            var keyStartIndex = FindKeyStartIndex(tokens, keyEndIndex);
+
+            var rawKeyTail = tokens[keyEndIndex];
+            var keyTail = rawKeyTail[..rawKeyTail.IndexOf(':')];
+            if (string.IsNullOrWhiteSpace(keyTail))
+                continue;
+
+            var keyParts = tokens[keyStartIndex..keyEndIndex].ToList();
+            keyParts.Add(keyTail);
+            var key = CleanLine(string.Join(" ", keyParts));
+
+            var valueStartIndex = keyEndIndex + 1;
+            var valueEndIndexExclusive = markerPos + 1 < keyTokenIndexes.Count
+                ? keyTokenIndexes[markerPos + 1] - FindBacktrackLength(tokens, keyTokenIndexes[markerPos + 1])
+                : tokens.Length;
+
+            if (valueStartIndex >= valueEndIndexExclusive)
+                continue;
+
+            var value = CleanLine(string.Join(" ", tokens[valueStartIndex..valueEndIndexExclusive]));
+            if (key.Length is < 2 or > 80 || value.Length < 1)
+                continue;
+
+            pairs.Add((key, value));
+        }
+
+        return pairs;
+    }
+
+    private static bool IsKeyMarkerToken(string token)
+    {
+        var colonIndex = token.IndexOf(':');
+        if (colonIndex < 1)
+            return false;
+
+        var keyPart = token[..colonIndex];
+        return Regex.IsMatch(keyPart, @"^[A-Za-z][A-Za-z0-9\-\+\.\(\)\/]*$");
+    }
+
+    private static int FindKeyStartIndex(string[] tokens, int keyEndIndex)
+    {
+        var backtrack = FindBacktrackLength(tokens, keyEndIndex);
+        return Math.Max(0, keyEndIndex - backtrack);
+    }
+
+    private static int FindBacktrackLength(string[] tokens, int keyEndIndex)
+    {
+        var tailToken = tokens[keyEndIndex];
+        var tail = tailToken[..tailToken.IndexOf(':')];
+        var normalizedTail = NormalizeForMatching(tail);
+
+        // Well-known labels should remain single-word keys (e.g. Category:),
+        // otherwise names like "MSI ... Category:" could corrupt the key.
+        if (normalizedTail is "name" or "category" or "type" or "model")
+            return 0;
+
+        var backtrack = 0;
+        for (var i = keyEndIndex - 1; i >= 0 && backtrack < 2; i--)
+        {
+            var current = tokens[i];
+            if (current.Contains(':'))
+                break;
+
+            if (!Regex.IsMatch(current, @"^[A-Za-z][A-Za-z0-9\-\+\.\(\)\/]*$"))
+                break;
+
+            backtrack++;
+        }
+
+        return backtrack;
+    }
+
+    private static bool IsNameKey(string normalizedKey)
+        => normalizedKey is "name" or "product name" or "model" or "model name";
+
+    private static bool IsCategoryKey(string normalizedKey)
+        => normalizedKey is "category";
+
+    private static bool IsTypeKey(string normalizedKey)
+        => normalizedKey is "type" or "subtype" or "subcategory" or "sub category";
+
+    private static string? CanonicalizeCategoryName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var normalized = NormalizeForMatching(value);
+        normalized = Regex.Replace(normalized, @"[^a-z0-9 ]", " ");
+        normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
+
+        return normalized switch
+        {
+            "cpu" or "processor" or "procesor" => "CPU",
+            "gpu" or "graphics card" or "video card" or "placa video" => "GPU",
+            "ram" or "memory" or "memorie ram" => "RAM",
+            "motherboard" or "mainboard" or "placa de baza" => "Motherboard",
+            "psu" or "power supply" or "power supply unit" or "sursa" or "sursa de alimentare" => "PSU",
+            "storage" or "stocare" or "drive" => "Storage",
+            "cooler" or "cpu cooler" or "cooling" or "racire" => "Cooler",
+            "case" or "pc case" or "chassis" or "carcasa" => "Case",
+            _ => null
+        };
+    }
+
+    private static string? CanonicalizeSubcategoryName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var normalized = NormalizeForMatching(value);
+        normalized = Regex.Replace(normalized, @"[^a-z0-9 ]", " ");
+        normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
+
+        return normalized switch
+        {
+            "ddr4" => "DDR4",
+            "ddr5" => "DDR5",
+            "ssd nvme" or "nvme" or "m2 nvme" => "SSD NVMe",
+            "ssd sata" or "sata ssd" => "SSD SATA",
+            "hdd" or "hard disk" or "hard drive" => "HDD",
+            "air" or "air cooler" or "aer" => "Aer",
+            "liquid" or "aio" or "water" or "lichid" or "liquid cooling" => "Lichid",
+            _ => null
+        };
+    }
+
+    private static string? CanonicalizeSubcategoryForCategory(string? suggestedSubcategory, string? suggestedCategory)
+    {
+        if (string.IsNullOrWhiteSpace(suggestedSubcategory) || string.IsNullOrWhiteSpace(suggestedCategory))
+            return suggestedSubcategory;
+
+        var canonicalSub = CanonicalizeSubcategoryName(suggestedSubcategory) ?? suggestedSubcategory;
+        var canonicalCategory = CanonicalizeCategoryName(suggestedCategory) ?? suggestedCategory;
+
+        return canonicalCategory switch
+        {
+            "RAM" when canonicalSub is "DDR4" or "DDR5" => canonicalSub,
+            "Storage" when canonicalSub is "SSD NVMe" or "SSD SATA" or "HDD" => canonicalSub,
+            "Cooler" when canonicalSub is "Aer" or "Lichid" => canonicalSub,
+            _ => null
+        };
     }
 
     private static (string? category, string? subcategory) DetectCategorySubcategory(string normalizedText)
@@ -350,6 +645,7 @@ public class PdfExtractionService(ILogger<PdfExtractionService> logger) : IPdfEx
             "memory type" => "memory_type",
             "memory bus" or "bus width" => "bus_width",
             "ram" or "capacity" => "capacity",
+            "ram support" => "ram_support",
             "speed" or "memory speed" => "speed",
             "latency" or "cas latency" => "latency",
             "type" => "type",
@@ -357,6 +653,7 @@ public class PdfExtractionService(ILogger<PdfExtractionService> logger) : IPdfEx
             "read speed" or "sequential read" => "read_speed",
             "write speed" or "sequential write" => "write_speed",
             "tbw" => "tbw",
+            "tdp" => "tdp",
             "wattage" or "power" or "putere" => "wattage",
             "efficiency" or "eficienta" => "efficiency",
             "modular" => "modular",
